@@ -18,9 +18,9 @@ namespace Secure_tool
 {
     public partial class MainMonitorForm : Form
     {
-        #region 全局缓存与锁
-        private readonly string _selfExePath = Path.GetFullPath(Assembly.GetExecutingAssembly().Location).ToLowerInvariant();
-        private readonly int _selfPid = Process.GetCurrentProcess().Id;
+        #region 全局缓存与锁（修复：移除字段直接GetFullPath，规避设计器空路径崩溃）
+        private string _selfExePath = string.Empty;
+        private int _selfPid;
         private readonly string _configPath = Path.Combine(Application.StartupPath, "Config.json");
         private readonly object _signLock = new();
         private readonly object _fileLogLock = new();
@@ -40,6 +40,25 @@ namespace Secure_tool
         public MainMonitorForm()
         {
             InitializeComponent();
+
+            // 区分VS设计器/真实运行环境，彻底解决 The path is empty 崩溃
+            if (!DesignMode)
+            {
+                string rawLoc = Assembly.GetExecutingAssembly().Location;
+                // 空路径兜底保护
+                if (string.IsNullOrWhiteSpace(rawLoc))
+                    rawLoc = Application.ExecutablePath;
+
+                _selfExePath = Path.GetFullPath(rawLoc).ToLowerInvariant();
+                _selfPid = Process.GetCurrentProcess().Id;
+            }
+            else
+            {
+                // 设计器占位值，防止空字符串传入GetFullPath
+                _selfExePath = Path.Combine(Application.StartupPath, "Secure_tool.exe");
+                _selfPid = 0;
+            }
+
             InitTrayBindEvents();
             LoadConfig();
             InitFileWatcher();
@@ -126,7 +145,7 @@ namespace Secure_tool
         }
         #endregion
 
-        #region 配置加载（新增可信厂商白名单）
+        #region 配置加载（内置可信厂商白名单，放行豆包/微信/QQ等国产软件）
         private void LoadConfig()
         {
             if (!File.Exists(_configPath))
@@ -207,7 +226,7 @@ namespace Secure_tool
         }
         #endregion
 
-        #region 签名校验核心方法（新增可信厂商签名判断，修复豆包误报）
+        #region 签名校验核心方法（微软签名 + 国产厂商双校验，解决豆包误判）
         private bool IsCriticalSystemPath(string exePath)
         {
             if (string.IsNullOrWhiteSpace(exePath)) return false;
